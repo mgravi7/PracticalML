@@ -6,25 +6,153 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo=FALSE, message=FALSE, results='hide', cache=TRUE, warning=FALSE)
 ```
 
-## R Markdown
+## Synopsis
+One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this report, our goal is to use data from accelerometers on the belt, forearm, arm, and dumbbell of 6 participants and build a model to quantify how well weight lifting exercises are done. Please see [this webpage](http://groupware.les.inf.puc-rio.br/har#weight_lifting_exercises) for information on this research.
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+After data exploration and data cleaning, cross-validation technique is used to build models using four different techniques. The best model shows an accuracy of 99.5% and that model is used to predict the outcome for the supplied test data.
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+## Data Exploration
+The training data file and the test data file are loaded. We look at the structure of the data, head of the data, tail of the data and the column names. It is clear there are many columns that contain *NA*, *#DIV/0!* and blank as values. These are read as *NA* values to help the analysis.
 
-```{r cars}
-summary(cars)
+There is a total of 19622 observations of 160 variables in the training data set. Test data set contains 20 observations of 160 variables.
+
+```{r DataExploration}
+# load libraries, set seed for reproducibility
+library(caret)
+library(gbm)
+set.seed(1)
+
+# load data
+trainDF <- read.csv("C:/Users/mgrav/Desktop/pml-training.csv", na.strings = c("NA", "#DIV/0!", ""))
+testDF <- read.csv("C:/Users/mgrav/Desktop/pml-testing.csv", na.strings = c("NA", "#DIV/0!", ""))
+
+# explore data
+str(trainDF)
+head(trainDF)
+tail(trainDF)
+colnames(trainDF)
 ```
 
-## Including Plots
+## Data Cleaning
+There are 100 columns that contain more than 50% NA values. In fact, the number is the same whether are looking for 20% NA values or 80% NA values. These columns are removed.
 
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r RemoveNaColumns}
+# remove "NA" columns
+naStats <- colSums(is.na(trainDF))
+naCols <- (naStats/nrow(trainDF) > 0.5)
+sum(naCols == TRUE)
+sum((naStats/nrow(trainDF) > 0.2) == TRUE)
+sum((naStats/nrow(trainDF) > 0.8) == TRUE)
+trainDF <- trainDF[,!naCols]
+testDF <- testDF[,!naCols]
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+There is no documentation from the original research about column names. Examination of the titles of the remaining column names show the first seven columns are not relevant to our modeling. Please see below.
+
+```{r RemoveUnneededColumns, results='markup'}
+# remove obviously unneeded columns
+colnames(trainDF)
+trainDF <- trainDF[,-c(1:7)]
+testDF <- testDF[,-c(1:7)]
+```
+
+Let us take a look at the summary data for the remaining columns. Please note the distribution of *classe* variable which is our predictor variable (last one in the list).
+
+```{r DataSummary, results='markup'}
+summary(trainDF)
+```
+
+## Cross Validation Data Sets
+Test data set has only 20 rows whereas the training data set has 19622 rows. Recommended training to test ratio is about 70 to 30. Hence, we are going to divide the training data into two data sets: cross validation training set and cross validation test set. We are using a ratio of 75-25 for this.
+
+The following plot shows the distribution of *classe* variable in the cross validation training data set.
+```{r CrossValidation, results='markup'}
+# cross validation requires subsetting trainDF
+inTrain = createDataPartition(trainDF$classe, p = 3/4)[[1]]
+cvTrainDF = trainDF[ inTrain,]
+cvTestDF = trainDF[-inTrain,]
+
+# plot showing distribution of predictor in Cross Validation training set
+barplot(table(cvTrainDF$classe), main = "Distribution of classe for Cross Validation Training Set",
+	ylab = "Frequency", xlab = 'classe', col = "salmon")
+```
+
+## Building Models
+The following algorithms are used for building models and evaluating them:
+
+* Random Forest
+
+* Gradient Boosting Machine (GBM)
+
+* Linear Discriminant Analysis (LDA)
+
+* Recursive Paritioning for Classification (RPART)
+
+```{r BuildModelRF}
+mdlRF <- train(classe ~ ., data = cvTrainDF, method = "rf")
+```
+
+```{r BuildModelGBM}
+mdlGBM <- train(classe ~ ., data = cvTrainDF, method = "gbm")
+```
+
+```{r BuildModelLDA}
+mdlLDA <- train(classe ~ ., data = cvTrainDF, method = "lda")
+```
+
+```{r BuildModelRPART}
+mdlRPART <- train(classe ~ ., data = cvTrainDF, method = "rpart")
+```
+
+## Evaluating Models
+We use the cross validation test data set to perform predictions for all the above models and calculate the confusion matrix.
+
+```{r EvaluateModels, results='markup'}
+# predict
+predictionRF <- predict(mdlRF, cvTestDF)
+predictionGBM <- predict(mdlGBM, cvTestDF)
+predictionLDA <- predict(mdlLDA, cvTestDF)
+predictionRPART <- predict(mdlRPART, cvTestDF)
+
+# accuracy
+cmRF <- confusionMatrix(cvTestDF$classe, predictionRF)	
+cmGBM <- confusionMatrix(cvTestDF$classe, predictionGBM)
+cmLDA <- confusionMatrix(cvTestDF$classe, predictionLDA)
+cmRPART <- confusionMatrix(cvTestDF$classe, predictionRPART)
+```
+
+Please see below for the accuracy of various models.
+
+```{r PrintAccuracy, results='markup'}
+accuracyStr <-paste0("ACCURACY OF MODELS", "\n",
+	"Random Forest: ", format(round(cmRF$overall['Accuracy'], 3), nsmall = 3), "\n",
+	"GBM: ", format(round(cmGBM$overall['Accuracy'], 3), nsmall = 3), "\n",
+	"LDA: ", format(round(cmLDA$overall['Accuracy'], 3), nsmall = 3), "\n",
+	"RPART: ", format(round(cmRPART$overall['Accuracy'], 3), nsmall = 3))
+cat(accuracyStr)
+```
+
+## Model choice and Error rate
+Random Forest is the model of our choice as the accuracy is 0.995.
+Since *Error Rate* is *(1 - Accuracy)*, the error rate is 0.005.
+Please see the confusion matrix for the Random Forest Model!
+
+```{r RFConfusionMatrix, results='markup'}
+cmRF
+```
+
+## Prediction for the Testing Set
+Using the Random Forest Model, the following shows the prediction for the original testing data set we started with!
+
+```{r Predictions, results='markup'}
+predictionFinalRF <- predict(mdlRF, testDF)
+predictionFinalRF
+```
+
+## Reference
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. *[Qualitative Activity Recognition of Weight Lifting Exercises](http://groupware.les.inf.puc-rio.br/work.jsf?p1=11201)*. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013
+
+*THE END*
